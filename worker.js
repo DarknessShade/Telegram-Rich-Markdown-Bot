@@ -17,6 +17,7 @@
  * 6) Tag Render Settings: Per-channel toggle for specific tags via glass buttons.
  */
 
+
 const BOT_TOKEN = "TOKEN IN PLACE"; 
 const ADMIN_ID = 112345678895; // admin user id
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
@@ -27,7 +28,7 @@ const TTL_PREVIEW_SEC = 60 * 60;             // 1 hour (pending preview)
 const TTL_AWAIT_SEC = 10 * 60;               // 10 min (footer input)
 
 const DEFAULT_CONFIG = { quote: true, time: true, map: true, code: true, expand: true, media: true, spoiler: true };
-
+ 
 export default {
 	async fetch(request, env) {
 		if (request.method === "GET") return new Response("✅ Bot is running!", { status: 200 });
@@ -49,6 +50,8 @@ export default {
 				await handleCallback(update.callback_query, env);
 			} else if (update.channel_post) {
 				await handleChannelPost(update.channel_post, env);
+			} else if (update.edited_channel_post) {
+				await handleChannelPost(update.edited_channel_post, env);
 			}
 		} catch (err) {
 			console.error("Handler error:", err && err.stack ? err.stack : err);
@@ -125,6 +128,7 @@ async function setChannelConfig(env, channelId, config) {
 
 // Stats / dashboard helpers
 function dateKey(offsetDays = 0) {
+	// Tehran local date (UTC+3:30)
 	const ms = Date.now() + 3.5 * 3600 * 1000 - offsetDays * 24 * 3600 * 1000;
 	const d = new Date(ms);
 	return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
@@ -184,7 +188,6 @@ function backKeyboard(lang) {
 		],
 	};
 }
-// Channel guide keyboard
 function channelGuideKeyboard(lang, userChannels) {
 	const isFa = lang === "fa";
 	const rows = [];
@@ -217,7 +220,6 @@ function backToChannelKeyboard(lang) {
 		]],
 	};
 }
-// Config menus
 function renderMenuKeyboard(lang, userChannels) {
 	const isFa = lang === "fa";
 	const rows = [];
@@ -234,14 +236,13 @@ function renderTogglesKeyboard(lang, channelId, config) {
 		const status = config[key] ? "✅" : "❌";
 		return { text: `${status} ${isFa ? labelFa : labelEn}`, callback_data: `${lang}_rtgl_${channelId}_${key}` };
 	};
-	rows.push([mkBtn("quote", "نقل‌قول (\"\")", "Quote (\"\")"), mkBtn("time", "زمان", "Time")]);
+	rows.push([mkBtn("quote", 'نقل‌قول ("")', 'Quote ("")'), mkBtn("time", "زمان", "Time")]);
 	rows.push([mkBtn("map", "نقشه", "Map"), mkBtn("code", "کد (///)", "Code (///)")]);
 	rows.push([mkBtn("expand", "کشویی (???)", "Expand (???)"), mkBtn("media", "مدیا (اسلایدشو)", "Media")]);
 	rows.push([mkBtn("spoiler", "اسپویلر (🙈)", "Spoiler (🙈)")]);
 	rows.push([{ text: isFa ? "⬅️ بازگشت به لیست" : "⬅️ Back to list", callback_data: `${lang}_rendermenu` }]);
 	return { inline_keyboard: rows };
 }
-// Footer set/remove menu.
 function footerMenuKeyboard(lang, userChannels) {
 	const isFa = lang === "fa";
 	const rows = [];
@@ -256,7 +257,6 @@ function footerMenuKeyboard(lang, userChannels) {
 	]);
 	return { inline_keyboard: rows };
 }
-// Live preview
 function previewKeyboard(userChannels) {
 	const rows = [];
 	for (const c of userChannels || []) {
@@ -265,7 +265,6 @@ function previewKeyboard(userChannels) {
 	rows.push([{ text: "❌ بستن پیش‌نمایش / Close", callback_data: "preview_close" }]);
 	return { inline_keyboard: rows };
 }
-// Undo confirmation.
 function undoConfirmKeyboard(lang, channelId) {
 	const isFa = lang === "fa";
 	return {
@@ -292,16 +291,16 @@ async function handleMessage(message, env) {
 	const trimmed = rawText.trim();
 	await registerUser(env, userId);
 
-	// --- FOOTER INPUT STATE ---
+	// --- FOOTER INPUT STATE (capture next message as footer) ---
 	const awaitFooter = await env.DB.get(`await_footer:${userId}`);
 	if (awaitFooter) {
 		if (trimmed.startsWith("/")) {
-			await env.DB.delete(`await_footer:${userId}`);
+			await env.DB.delete(`await_footer:${userId}`); // a command cancels footer input
 		} else {
 			const footerText = renderUserText(rawText, message.entities, DEFAULT_CONFIG) || trimmed;
 			await env.DB.put(`footer:${awaitFooter}`, footerText);
 			await env.DB.delete(`await_footer:${userId}`);
-			await sendPlain(chatId, "✅ امضای کانال ذخیره شد. از این پس ته هر پستِ همان کانال اضافه می‌شود.\nبرای حذف، از منوی «✍️ امضای کانال» دکمه‌ی 🗑 را بزن.");
+			await sendPlain(chatId, `✅ امضای کانال ذخیره شد. از این پس ته هر پستِ همان کانال اضافه می‌شود.\n\nمتنِ ذخیره‌شده:\n${footerText}\n\nبرای حذف، از منوی «✍️ امضای کانال» دکمه‌ی 🗑 را بزن.`);
 			return;
 		}
 	}
@@ -322,17 +321,13 @@ async function handleMessage(message, env) {
 				chart += `${k.slice(5)}  ${bar} ${c}\n`;
 			}
 			const msg =
-`📊 *داشبورد بات*
-
-👥 کاربران: ${users}
-🔄 کل پست‌های رندرشده: ${processed}
-📢 کانال‌های فعال: ${channels}
-✍️ امضاهای تنظیم‌شده: ${footers}
-🗓 پست‌های امروز: ${today}
-
-📈 ۷ روز اخیر:
-\`\`\`
-${chart}\`\`\``;
+				`📊 *داشبورد بات*\n\n` +
+				`👥 کاربران: ${users}\n` +
+				`🔄 کل پست‌های رندرشده: ${processed}\n` +
+				`📢 کانال‌های فعال: ${channels}\n` +
+				`✍️ امضاهای تنظیم‌شده: ${footers}\n` +
+				`🗓 پست‌های امروز: ${today}\n\n` +
+				`📈 ۷ روز اخیر:\n\`\`\`\n${chart}\`\`\``;
 			await sendPlain(chatId, msg);
 			return;
 		}
@@ -355,7 +350,7 @@ ${chart}\`\`\``;
 		}
 	}
 
-	// --- UNDO ---
+	// --- UNDO (any user, in PM) ---
 	if (trimmed === "/undo") {
 		const chs = await kvGetUserChannels(env, userId);
 		if (!chs.length) {
@@ -434,7 +429,7 @@ async function handleCallback(cb, env) {
 	const data = cb.data;
 	await callApi("answerCallbackQuery", { callback_query_id: cb.id });
 
-	// --- Non-language-prefixed actions ---
+	// --- Non-language-prefixed actions (from DM live preview) ---
 	if (data.startsWith("pub_")) {
 		const channelId = data.slice(4);
 		const text = await env.DB.get(`preview:${userId}`);
@@ -442,7 +437,10 @@ async function handleCallback(cb, env) {
 			await sendPlain(chatId, "⛔️ پیش‌نمایش منقضی شده. دوباره متن را بفرست.");
 			return;
 		}
-		const res = await sendRichMarkdown(channelId, text);
+		let outText = text;
+		const footer = await env.DB.get(`footer:${channelId}`);
+		if (footer) outText = outText + "\n\n" + footer;
+		const res = await sendRichMarkdown(channelId, outText);
 		if (res?.ok && res.result?.message_id) {
 			await kvMarkMessageProcessed(env, channelId, res.result.message_id);
 			await env.DB.put(
@@ -574,7 +572,7 @@ async function handleCallback(cb, env) {
 		}
 		if (r?.ok) {
 			await env.DB.delete(`last_render:${channelId}`);
-			await env.DB.delete(`processed:${channelId}:${last.messageId}`);
+			await env.DB.delete(`processed:${channelId}:${last.messageId}`); // allow re-render later
 			await editRichMarkdown(chatId, msgId, "✅ آخرین رندر به متن خام برگردانده شد.", null);
 		} else {
 			await editRichMarkdown(chatId, msgId, "⚠️ بازگردانی ناموفق بود (شاید پیام خیلی قدیمی است یا حذف شده).", null);
@@ -622,9 +620,10 @@ async function handleChannelPost(post, env) {
 	let text = renderUserText(rawText, entities, config);
 	if (!text) text = rawText.trim();
 
-	// Append auto channel footer
+	// Append auto channel footer.
 	if (footer) text = text + "\n\n" + footer;
 
+	// Save the original raw text so /undo can revert this render.
 	await env.DB.put(
 		`last_render:${channelId}`,
 		JSON.stringify({ messageId, isCaption, raw: rawText }),
@@ -635,6 +634,7 @@ async function handleChannelPost(post, env) {
 
 	let res;
 	if (isCaption) {
+		// Captions have NO rich field — only classic inline formatting via parse_mode.
 		res = await callApi("editMessageCaption", {
 			chat_id: channelId,
 			message_id: messageId,
@@ -642,6 +642,7 @@ async function handleChannelPost(post, env) {
 			parse_mode: "HTML",
 		});
 	} else {
+		// Text posts use Telegram's NATIVE Rich renderer (markdown mode, may embed HTML).
 		res = await callApi("editMessageText", {
 			chat_id: channelId,
 			message_id: messageId,
@@ -658,29 +659,29 @@ async function handleChannelPost(post, env) {
 
 // ─── Render pipeline ──────────────────────────────────────────────────────────
 function renderUserText(rawText, entities, config) {
+	config = config || DEFAULT_CONFIG;
 	let text = entitiesToMarkdown(rawText, entities);
-	if (config.media) text = autoGroupMedia(text);
-	text = applyCustomSyntax(text, config);
+	if (config.media) text = autoGroupMedia(text); // pure media URLs -> slideshow
+	text = applyCustomSyntax(text, config);         // headings, quote, time, map, ///, ???, tags, 🙈
 	text = text.trim();
-	text = preserveManualSpacing(text);
+	text = preserveManualSpacing(text);             // keep manual spacing (after trim!)
 	return text;
 }
 
 function applyCustomSyntax(text, config) {
-	// Mask code blocks to protect them from regex replacements
+	// 1) Mask code (fenced ```...```, ///...///, and inline `...`) so replacements skip them.
 	const codeBlocks = [];
-	text = text.replace(/(```[\s\S]*?```|\/\/\/[\s\S]*?\/\/\/)/g, match => {
+	text = text.replace(/(```[\s\S]*?```|\/\/\/[\s\S]*?\/\/\/|`[^`\n]+`)/g, match => {
 		codeBlocks.push(match);
 		return `\u0000CB${codeBlocks.length - 1}\u0000`;
 	});
 
-	// Disable standard Markdown headings (inserts Zero-Width Space so parser ignores them)
-	text = text.replace(/(^|\n)([ \t>]*)(#{1,6})([ \t]+)/g, "$1$2$3\u200B$4");
+	// 2) FIX A — hashtags & headings.
+	//    Only the explicit `#_ ` syntax becomes a real heading; every other
+	//    line-start `#` is escaped so Telegram never renders it as a heading/bold.
+	text = neutralizeHashesAndHeadings(text);
 
-	// Enable custom `#_ ` heading syntax
-	text = text.replace(/(^|\n)([ \t>]*)(#{1,6})_([ \t]+)/g, "$1$2$3$4");
-
-	// Restore code blocks
+	// 3) Restore code blocks.
 	text = text.replace(/\u0000CB(\d+)\u0000/g, (_, i) => codeBlocks[Number(i)]);
 
 	if (config.quote) {
@@ -715,6 +716,23 @@ function applyCustomSyntax(text, config) {
 	return text;
 }
 
+// FIX A: neutralize accidental headings / hashtag-bold.
+// Runs while code is masked out by the caller.
+function neutralizeHashesAndHeadings(text) {
+	// a) Custom heading `#_ ` / `##_ ` ... -> unique sentinel (protected from step b).
+	text = text.replace(/(^|\n)([ \t>]*)(#{1,6})_[ \t]+/g,
+		(_, nl, pre, hashes) => `${nl}${pre}\u0000H${hashes.length}\u0000`);
+	// b) Escape any remaining line-start `#` run so it renders literally.
+	//    Telegram still auto-detects `#hashtags` as clickable entities.
+	text = text.replace(/(^|\n)([ \t>]*)(#{1,6})/g,
+		(_, nl, pre, hashes) => `${nl}${pre}${hashes.replace(/#/g, "\\#")}`);
+	// c) Restore custom headings as real ATX headings.
+	text = text.replace(/\u0000H([1-6])\u0000/g, (_, n) => "#".repeat(Number(n)) + " ");
+	return text;
+}
+
+// """ quote
+// — author """  ->  <aside> ... </aside>
 function applyPullQuote(text) {
 	return text.replace(/"""([\s\S]+?)"""/g, (_, body) => {
 		const lines = body.trim().split("\n");
@@ -727,33 +745,60 @@ function applyPullQuote(text) {
 	});
 }
 
+// A message that is ONLY media URLs -> slideshow.
 function autoGroupMedia(text) {
 	if (!isAllMediaUrls(text)) return text;
 	const media = text.split("\n").map(l => l.trim()).filter(Boolean).map(u => `![](${u})`).join("\n");
 	return `<tg-slideshow>\n${media}\n</tg-slideshow>`;
 }
 
-// ─── Preserve manual spacing ──────────────────────────────────────────────────
+// ─── FIX B: Preserve manual spacing ───────────────────────────────────────────
 function preserveManualSpacing(text) {
 	const NBSP = "\u00A0";
+
+	// Protect fenced code blocks entirely.
 	const fences = [];
 	text = text.replace(/```[\s\S]*?```/g, m => {
 		fences.push(m);
 		return `\u0000F${fences.length - 1}\u0000`;
 	});
-	const out = text.split("\n").map(line => {
-		if (/\u0000F\d+\u0000/.test(line)) return line;
-		if (/^\s*\|.*\|\s*$/.test(line)) return line;
+
+	const lines = text.split("\n");
+	const out = lines.map(line => {
+		if (/\u0000F\d+\u0000/.test(line)) return line;   // fenced code placeholder
+		if (/^\s*\|.*\|\s*$/.test(line)) return line;      // table row -> keep alignment
+
+		// Protect inline code so we don't touch its spaces.
 		const codes = [];
 		let l = line.replace(/`[^`\n]*`/g, m => {
 			codes.push(m);
 			return `\u0000C${codes.length - 1}\u0000`;
 		});
+
+		// Preserve LEADING indentation — but only for plain text lines.
+		// Skip block starters (lists/quotes/headings/tables) so their nesting/markup stays valid.
+		const rest = l.replace(/^[ \t]+/, "");
+		const isBlockStarter = /^(?:[-*+]\s|\d+[.)]\s|>|#|\\#|\||<)/.test(rest);
+		if (!isBlockStarter) {
+			l = l.replace(/^[ \t]+/, m => NBSP.repeat(m.length));
+		}
+
+		// Preserve runs of 2+ internal spaces.
 		l = l.replace(/ {2,}/g, m => NBSP.repeat(m.length));
+
+		// Restore inline code.
 		l = l.replace(/\u0000C(\d+)\u0000/g, (_, i) => codes[Number(i)]);
 		return l;
-	}).join("\n");
-	return out.replace(/\u0000F(\d+)\u0000/g, (_, i) => fences[Number(i)]);
+	});
+
+	let joined = out.join("\n");
+
+	// Preserve multiple consecutive blank lines (markdown normally collapses them).
+	// 3+ newlines = 2+ blank lines -> keep the extra gaps with NBSP-only lines.
+	joined = joined.replace(/\n{3,}/g, m => "\n\n" + (NBSP + "\n").repeat(m.length - 2));
+
+	// Restore fenced code blocks.
+	return joined.replace(/\u0000F(\d+)\u0000/g, (_, i) => fences[Number(i)]);
 }
 
 // ─── Format Detectors & Helpers ───────────────────────────────────────────────
@@ -771,7 +816,7 @@ function hasRealFormatting(t) {
 		/\[(?:نقشه|map)\s*:/.test(t) ||
 		/\[(?:اسلایدشو|slideshow|کلاژ|collage|کشویی|expand)\]/.test(t) ||
 		/[🙈🔽]/.test(t) ||
-		/(^|\n)[ \t>]*#{1,6}_\s+\S/.test(t) ||
+		/(^|\n)[ \t>]*#{1,6}_\s+\S/.test(t) ||                 // custom `#_ ` heading only
 		/(^|\n)\s*[-*+]\s*\[[ xX]\]\s+\S/.test(t) ||
 		/(^|\n)\s*[-*+]\s+\S/.test(t) ||
 		/(^|\n)\s*\d+\.\s+\S/.test(t) ||
@@ -848,7 +893,7 @@ function wrapEntity(e, content) {
 		case "blockquote":
 		case "expandable_blockquote":
 			return content.split("\n").map(l => `> ${l}`).join("\n");
-		default: return content;
+		default: return content; // hashtag / mention / url / etc. -> left as-is
 	}
 }
 
@@ -856,7 +901,14 @@ function wrapEntity(e, content) {
 async function sendPlain(chatId, text, replyMarkup) {
 	const body = { chat_id: chatId, text, parse_mode: "Markdown" };
 	if (replyMarkup) body.reply_markup = replyMarkup;
-	await callApi("sendMessage", body);
+	const res = await callApi("sendMessage", body);
+	if (!res?.ok) {
+		// Fallback: send without parse_mode if Markdown parsing failed.
+		const fb = { chat_id: chatId, text };
+		if (replyMarkup) fb.reply_markup = replyMarkup;
+		return await callApi("sendMessage", fb);
+	}
+	return res;
 }
 async function sendRichMarkdown(chatId, markdown, replyMarkup) {
 	const body = { chat_id: chatId, rich_message: { markdown, is_rtl: isRtl(markdown) } };
@@ -865,15 +917,32 @@ async function sendRichMarkdown(chatId, markdown, replyMarkup) {
 	if (!res?.ok) {
 		const fb = { chat_id: chatId, text: markdown };
 		if (replyMarkup) fb.reply_markup = replyMarkup;
-		const fbRes = await callApi("sendMessage", fb);
-		return fbRes;
+		return await callApi("sendMessage", fb);
+	}
+	return res;
+}
+async function sendRichHtml(chatId, html, replyMarkup) {
+	const body = { chat_id: chatId, rich_message: { html, is_rtl: isRtl(html) } };
+	if (replyMarkup) body.reply_markup = replyMarkup;
+	const res = await callApi("sendRichMessage", body);
+	if (!res?.ok) {
+		const fb = { chat_id: chatId, text: html, parse_mode: "HTML" };
+		if (replyMarkup) fb.reply_markup = replyMarkup;
+		return await callApi("sendMessage", fb);
 	}
 	return res;
 }
 async function editRichMarkdown(chatId, messageId, markdown, replyMarkup) {
 	const body = { chat_id: chatId, message_id: messageId, rich_message: { markdown, is_rtl: isRtl(markdown) } };
 	if (replyMarkup) body.reply_markup = replyMarkup;
-	await callApi("editMessageText", body);
+	const res = await callApi("editMessageText", body);
+	if (!res?.ok) {
+		// Fallback to plain edit if rich edit fails.
+		const fb = { chat_id: chatId, message_id: messageId, text: markdown };
+		if (replyMarkup) fb.reply_markup = replyMarkup;
+		await callApi("editMessageText", fb);
+	}
+	return res;
 }
 async function callApi(method, body) {
 	const res = await fetch(`${TELEGRAM_API}/${method}`, {
@@ -888,13 +957,12 @@ async function callApi(method, body) {
 	}
 	return json;
 }
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONTENT
 // ═══════════════════════════════════════════════════════════════════════════════
 const WELCOME = {
 	fa: [
-		"# 🤖 Rich Markdown Bot",
+		"#_ 🤖 Rich Markdown Bot",
 		"",
 		"هر متن **Markdown** بفرستید، به‌صورت Rich Message رندر می‌شود. می‌توانید وسط همان متن، تگ‌های HTML تلگرام (مثل `<tg-spoiler>` یا `<details>`) یا فرمول (`$x^2$`) هم بگذارید؛ بقیه‌ی فرمت‌های دستی‌تان سالم می‌ماند.",
 		"همچنین می‌توانید بات را به کانال خود اضافه کنید تا پست‌ها خودکار قالب‌بندی شوند.",
@@ -903,7 +971,7 @@ const WELCOME = {
 		"از دکمه‌های زیر برای دیدن راهنما و دمو استفاده کنید 👇",
 	].join("\n"),
 	en: [
-		"# 🤖 Rich Markdown Bot",
+		"#_ 🤖 Rich Markdown Bot",
 		"",
 		"Send any **Markdown** text and it is echoed back as a rendered Rich Message. You can mix in Telegram HTML tags (e.g. `<tg-spoiler>`, `<details>`) or formulas (`$x^2$`) right inside it — the rest of your manual formatting stays intact.",
 		"You can also add this bot to your channel to auto-format posts.",
@@ -912,21 +980,27 @@ const WELCOME = {
 		"Use the buttons below to explore 👇",
 	].join("\n"),
 };
+
 const ABOUT = {
 	fa: [
-		"# ℹ️ درباره بات",
+		"#_ ℹ️ درباره بات",
 		"",
 		"این بات پیام‌های شما را با فرمت مدرن **Rich Message** تلگرام رندر می‌کند. حالت پایه «مارک‌داون» است و چون مارک‌داونِ تلگرام می‌تواند HTML را هم در خودش جا بدهد، برای استفاده از یک تگ یا فرمول، دیگر لازم نیست کل متن را HTML کنید؛ همین یعنی فاصله‌ها و بولدهای دستی‌تان هیچ‌وقت نمی‌پرند.",
+		"",
+		"نکته: هشتگ‌ها (مثل `#تخفیف`) دیگر بولد نمی‌شوند و مثل هشتگ عادی می‌مانند.",
 	].join("\n"),
 	en: [
-		"# ℹ️ About",
+		"#_ ℹ️ About",
 		"",
 		"This bot renders your messages using Telegram's modern **Rich Message** format. The base mode is Markdown, and since Telegram Markdown can embed HTML, you can drop in a single tag or formula without forcing the whole message into HTML — so your manual spacing and bold never get wiped.",
+		"",
+		"Note: hashtags (e.g. `#sale`) are no longer turned into bold headings — they stay normal hashtags.",
 	].join("\n"),
 };
+
 const HELP_CHANNEL = {
 	fa: [
-		"### 🛠 آموزش اتصال کانال:",
+		"###_ 🛠 آموزش اتصال کانال:",
 		"1. ربات را به کانال خود به‌عنوان **ادمین** اضافه کنید.",
 		"2. دسترسی **Edit Messages** (ویرایش پیام‌ها) را به آن بدهید.",
 		"3. یک پیام از کانال خود به همین‌جا (داخل بات) **Forward** کنید.",
@@ -943,7 +1017,7 @@ const HELP_CHANNEL = {
 		"برای دیدن تگ‌های مخصوص کانال و میان‌بُرهای فارسی، دکمه‌ی زیر را بزنید 👇",
 	].join("\n"),
 	en: [
-		"### 🛠 How to setup:",
+		"###_ 🛠 How to setup:",
 		"1. Add the bot to your channel as an **administrator**.",
 		"2. Grant it the **Edit Messages** permission.",
 		"3. **Forward** any message from your channel to this bot.",
@@ -960,14 +1034,15 @@ const HELP_CHANNEL = {
 		"Tap below to see channel-only tags and shortcuts 👇",
 	].join("\n"),
 };
+
 const HELP_CHANNEL_TAGS = {
 	fa: [
-		"# 🏷 تگ‌های مخصوص کانال و میان‌بُرها",
+		"#_ 🏷 تگ‌های مخصوص کانال و میان‌بُرها",
 		"",
 		"چون حالت پایه مارک‌داون است، می‌توانی هر تگ یا فرمول را وسط متن عادی بگذاری و **بقیه‌ی متن دست‌نخورده** می‌ماند.",
 		"",
 		"---",
-		"## ✍️ میان‌بُرهای ساده (بدون تگ خام)",
+		"##_ ✍️ میان‌بُرهای ساده (بدون تگ خام)",
 		"- `///کد///` → بلوک کد",
 		"- `???متن???` → بلوک **کشویی/بازشو**",
 		"- `\"\"\"نقل‌قول — نویسنده\"\"\"` → **نقل‌قول وسط‌چین** با امضا",
@@ -978,7 +1053,12 @@ const HELP_CHANNEL_TAGS = {
 		"- فقط چند **لینک مدیا** پشت‌سرهم بفرست → خودکار **اسلایدشو** می‌شود",
 		"",
 		"---",
-		"## ✅ روی پیام متنی کانال کار می‌کند",
+		"##_ #️⃣ هدینگ و هشتگ",
+		"- برای **هدینگ** از `#_ عنوان` استفاده کن (`##_` و `###_` هم داریم).",
+		"- هشتگ عادی مثل `#تخفیف` دیگر بولد/هدینگ نمی‌شود و سالم می‌ماند.",
+		"",
+		"---",
+		"##_ ✅ روی پیام متنی کانال کار می‌کند",
 		"- هدینگ (`#_ عنوان`)، نقل‌قول (`> ...`)",
 		"- لیست و تسک (`- [ ]` و `- [x]`)",
 		"- جدول، بلوک کد، و فرمول (`$...$` و `$$...$$`)",
@@ -986,7 +1066,7 @@ const HELP_CHANNEL_TAGS = {
 		"- همه‌ی استایل‌های inline (بولد، ایتالیک، خط‌خورده، کد، لینک)",
 		"",
 		"---",
-		"## ⚠️ روی کپشن مدیا کار نمی‌کند",
+		"##_ ⚠️ روی کپشن مدیا کار نمی‌کند",
 		"فقط استایل‌های inline رندر می‌شوند:",
 		"**بولد** · *ایتالیک* · ~~خط‌خورده~~ · `کد` · [لینک](https://t.me/) · ||اسپویلر||",
 		"هدینگ، لیست، جدول، بلوک کد و فرمول روی کپشن نمایش داده **نمی‌شوند**.",
@@ -994,12 +1074,12 @@ const HELP_CHANNEL_TAGS = {
 		"> 💡 اگر به todo / جدول / هدینگ نیاز داری، پست را به‌صورت **متنی** (بدون عکس) بفرست.",
 	].join("\n"),
 	en: [
-		"# 🏷 Channel-only Tags & Shortcuts",
+		"#_ 🏷 Channel-only Tags & Shortcuts",
 		"",
 		"Since the base mode is Markdown, you can drop any tag or formula into normal text and **the rest stays untouched**.",
 		"",
 		"---",
-		"## ✍️ Simple shortcuts (no raw tags)",
+		"##_ ✍️ Simple shortcuts (no raw tags)",
 		"- `///code///` → code block",
 		"- `???text???` → **expandable/collapsible** block",
 		"- `\"\"\"quote — author\"\"\"` → **centered pull-quote** with credit",
@@ -1010,7 +1090,12 @@ const HELP_CHANNEL_TAGS = {
 		"- send just a few **media URLs** in a row → auto **slideshow**",
 		"",
 		"---",
-		"## ✅ Works on channel text posts",
+		"##_ #️⃣ Headings vs hashtags",
+		"- For a **heading** use `#_ Title` (`##_` and `###_` too).",
+		"- A normal hashtag like `#sale` is no longer bolded/turned into a heading — it stays intact.",
+		"",
+		"---",
+		"##_ ✅ Works on channel text posts",
 		"- Headings (`#_ Title`), quotes (`> ...`)",
 		"- Lists & tasks (`- [ ]`, `- [x]`)",
 		"- Tables, code blocks, formulas (`$...$`, `$$...$$`)",
@@ -1018,7 +1103,7 @@ const HELP_CHANNEL_TAGS = {
 		"- All inline styles (bold, italic, strike, code, links)",
 		"",
 		"---",
-		"## ⚠️ Does NOT work on media captions",
+		"##_ ⚠️ Does NOT work on media captions",
 		"Only inline styles render:",
 		"**bold** · *italic* · ~~strike~~ · `code` · [link](https://t.me/) · ||spoiler||",
 		"Headings, lists, tables, code blocks and formulas are **not** shown on captions.",
@@ -1026,31 +1111,34 @@ const HELP_CHANNEL_TAGS = {
 		"> 💡 If you need todos / tables / headings, send the post as **text** (no photo).",
 	].join("\n"),
 };
+
 const HELP_MD = {
 	fa: [
-		"# 📖 راهنمای Markdown",
+		"#_ 📖 راهنمای Markdown",
 		"",
-		"متن Markdown بفرست، رندرشده برمی‌گردد. کادر خاکستری = چیزی که تایپ می‌کنی ↓ نتیجه بعدش می‌آید.",
+		"متن Markdown بفرست، رندرشده برمی‌گردد.",
 		"",
 		"---",
-		"## استایل متن",
-		"```",
+		"##_ استایل متن",
+		"///",
 		"**بولد** *ایتالیک* ~~خط‌خورده~~",
 		"`کد`  ==های‌لایت==  <u>آندرلاین</u>  <tg-spoiler>اسپویلر</tg-spoiler>",
-		"```",
+		"///",
+		"↓",
 		"**بولد** *ایتالیک* ~~خط‌خورده~~ `کد` ==های‌لایت== <u>آندرلاین</u> <tg-spoiler>اسپویلر</tg-spoiler>",
 		"",
 		"---",
-		"## هدینگ",
-		"```",
+		"##_ هدینگ",
+		"///",
 		"#_ هدینگ ۱",
 		"##_ هدینگ ۲",
 		"###_ هدینگ ۳",
-		"```",
+		"///",
+		"💡 هشتگ عادی مثل `#خبر` بولد نمی‌شود؛ فقط `#_` هدینگ می‌سازد.",
 		"",
 		"---",
-		"## لیست‌ها",
-		"```",
+		"##_ لیست‌ها",
+		"///",
 		"- شیر",
 		"- تخم‌مرغ",
 		"- [ ] کار انجام‌نشده",
@@ -1058,49 +1146,49 @@ const HELP_MD = {
 		"",
 		"1. بیدار شو",
 		"2. منتشر کن",
-		"```",
+		"///",
 		"",
 		"---",
-		"## نقل‌قول و فرمول",
-		"```",
+		"##_ نقل‌قول و فرمول",
+		"///",
 		"> نقل‌قول با **بولد**",
 		"فرمول داخل‌خطی $E = mc^2$",
 		"$$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$",
-		"```",
+		"///",
 		"",
 		"---",
-		"## بلوک کد",
-		"```",
+		"##_ بلوک کد",
 		"///",
 		"print(\"hello\")",
 		"///",
-		"```",
 		"💡 می‌توانی هر تگ HTML تلگرام را هم وسط همین مارک‌داون بگذاری؛ لازم نیست کل پیام HTML شود.",
 	].join("\n"),
 	en: [
-		"# 📖 Markdown Guide",
+		"#_ 📖 Markdown Guide",
 		"",
-		"Send Markdown text and get it echoed back rendered. Grey box = what you type ↓ result comes right after.",
+		"Send Markdown text and get it echoed back rendered.",
 		"",
 		"---",
-		"## Text styles",
-		"```",
+		"##_ Text styles",
+		"///",
 		"**bold** *italic* ~~strike~~",
 		"`code`  ==marked==  <u>underline</u>  <tg-spoiler>spoiler</tg-spoiler>",
-		"```",
+		"///",
+		"↓",
 		"**bold** *italic* ~~strike~~ `code` ==marked== <u>underline</u> <tg-spoiler>spoiler</tg-spoiler>",
 		"",
 		"---",
-		"## Headings",
-		"```",
+		"##_ Headings",
+		"///",
 		"#_ Heading 1",
 		"##_ Heading 2",
 		"###_ Heading 3",
-		"```",
+		"///",
+		"💡 A normal hashtag like `#news` is not bolded; only `#_` makes a heading.",
 		"",
 		"---",
-		"## Lists",
-		"```",
+		"##_ Lists",
+		"///",
 		"- milk",
 		"- eggs",
 		"- [ ] todo",
@@ -1108,260 +1196,235 @@ const HELP_MD = {
 		"",
 		"1. wake up",
 		"2. ship it",
-		"```",
+		"///",
 		"",
 		"---",
-		"## Quotes & formulas",
-		"```",
+		"##_ Quotes & formulas",
+		"///",
 		"> Quote with **bold**",
 		"Inline formula $E = mc^2$",
 		"$$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$",
-		"```",
+		"///",
 		"",
 		"---",
-		"## Code block",
-		"```",
+		"##_ Code block",
 		"///",
 		"print(\"hello\")",
 		"///",
-		"```",
 		"💡 You can also drop any Telegram HTML tag right inside this Markdown — no need to make the whole message HTML.",
 	].join("\n"),
 };
+
 const HELP_HTML = {
 	fa: [
-		"# 🌐 راهنمای HTML",
+		"#_ 🌐 راهنمای HTML",
 		"",
 		"تگ‌های HTML تلگرام را می‌توانی **هرجای متن** بگذاری (لازم نیست پیام با `<` شروع شود).",
 		"",
 		"---",
-		"## استایل متن",
-		"```",
-		"<b>بولد</b> <i>ایتالیک</i> <u>آندرلاین</u>",
-		"<s>خط‌خورده</s> <code>کد</code> <mark>های‌لایت</mark>",
-		"<tg-spoiler>اسپویلر</tg-spoiler>",
-		"```",
+		"##_ استایل متن",
 		"<b>بولد</b> <i>ایتالیک</i> <u>آندرلاین</u> <s>خط‌خورده</s> <code>کد</code> <mark>های‌لایت</mark> <tg-spoiler>اسپویلر</tg-spoiler>",
 		"",
 		"---",
-		"## بلوک کشویی و نقل‌قول",
-		"```",
+		"##_ بلوک کشویی و نقل‌قول",
 		"<details><summary>عنوان</summary>محتوای بازشو</details>",
 		"<blockquote>نقل‌قول</blockquote>",
 		"<aside>نقل‌قول وسط‌چین<cite>نویسنده</cite></aside>",
-		"```",
 		"",
 		"---",
-		"## لیست و جدول",
-		"```",
+		"##_ لیست و جدول",
 		"<ul><li>شیر</li><li>تخم‌مرغ</li></ul>",
 		"<ol><li>اول</li><li>دوم</li></ol>",
 		"<table><tr><th>سر</th><th>ستون</th></tr><tr><td>۱</td><td>۲</td></tr></table>",
-		"```",
 		"",
 		"---",
-		"## فرمول",
-		"```",
+		"##_ فرمول",
 		"<tg-math>x^2 + y^2</tg-math>",
 		"<tg-math-block>E = mc^2</tg-math-block>",
-		"```",
 	].join("\n"),
 	en: [
-		"# 🌐 HTML Guide",
+		"#_ 🌐 HTML Guide",
 		"",
 		"You can put Telegram HTML tags **anywhere** in your text (the message doesn't need to start with `<`).",
 		"",
 		"---",
-		"## Text styles",
-		"```",
-		"<b>bold</b> <i>italic</i> <u>underline</u>",
-		"<s>strike</s> <code>code</code> <mark>marked</mark>",
-		"<tg-spoiler>spoiler</tg-spoiler>",
-		"```",
+		"##_ Text styles",
 		"<b>bold</b> <i>italic</i> <u>underline</u> <s>strike</s> <code>code</code> <mark>marked</mark> <tg-spoiler>spoiler</tg-spoiler>",
 		"",
 		"---",
-		"## Expandable & quotes",
-		"```",
+		"##_ Expandable & quotes",
 		"<details><summary>Title</summary>Collapsible content</details>",
 		"<blockquote>Quote</blockquote>",
 		"<aside>Centered pull-quote<cite>Author</cite></aside>",
-		"```",
 		"",
 		"---",
-		"## Lists & tables",
-		"```",
+		"##_ Lists & tables",
 		"<ul><li>milk</li><li>eggs</li></ul>",
 		"<ol><li>first</li><li>second</li></ol>",
 		"<table><tr><th>Head</th><th>Col</th></tr><tr><td>1</td><td>2</td></tr></table>",
-		"```",
 		"",
 		"---",
-		"## Formulas",
-		"```",
+		"##_ Formulas",
 		"<tg-math>x^2 + y^2</tg-math>",
 		"<tg-math-block>E = mc^2</tg-math-block>",
-		"```",
 	].join("\n"),
 };
+
 const HELP_MEDIA = {
 	fa: [
-		"# 🖼 راهنمای مدیا",
+		"#_ 🖼 راهنمای مدیا",
 		"",
 		"می‌توانی عکس/ویدیو/فایل را داخل پیام Rich جاسازی کنی یا چند مدیا را گروهی نمایش بدهی.",
 		"",
 		"---",
-		"## عکس و ویدیو تکی",
-		"```",
+		"##_ عکس و ویدیو تکی",
+		"///",
 		"![کپشن](https://example.com/photo.jpg)",
-		"<video src=\"[https://example.com/clip.mp4](https://example.com/clip.mp4)\"></video>",
-		"```",
+		"<video src=\"https://example.com/clip.mp4\"></video>",
+		"///",
 		"💡 لینک باید مستقیم و http/https باشد.",
 		"",
 		"---",
-		"## اسلایدشو و کلاژ",
-		"```",
+		"##_ اسلایدشو و کلاژ",
+		"///",
 		"[اسلایدشو]",
 		"![](https://example.com/1.jpg)",
 		"![](https://example.com/2.jpg)",
 		"[/اسلایدشو]",
-		"```",
+		"///",
 		"یا با تگ خام:",
-		"```",
+		"///",
 		"<tg-slideshow>",
-		"![]([https://example.com/1.jpg](https://example.com/1.jpg))",
-		"![]([https://example.com/2.jpg](https://example.com/2.jpg))",
+		"![](https://example.com/1.jpg)",
+		"![](https://example.com/2.jpg)",
 		"</tg-slideshow>",
-		"```",
+		"///",
 		"💡 میان‌بُر: اگر فقط چند **لینک مدیا** را پشت‌سرهم (هر خط یکی) بفرستی، خودکار به اسلایدشو تبدیل می‌شود.",
 		"",
 		"---",
-		"## نقشه",
-		"```",
-		"[نقشه: 35.6892, 51.3890]",
-		"```",
+		"##_ نقشه",
+		"`[نقشه: 35.6892, 51.3890]`",
 	].join("\n"),
 	en: [
-		"# 🖼 Media Guide",
+		"#_ 🖼 Media Guide",
 		"",
 		"You can embed photos/videos/files in a Rich message or display several media as a group.",
 		"",
 		"---",
-		"## Single photo & video",
-		"```",
+		"##_ Single photo & video",
+		"///",
 		"![caption](https://example.com/photo.jpg)",
-		"<video src=\"[https://example.com/clip.mp4](https://example.com/clip.mp4)\"></video>",
-		"```",
+		"<video src=\"https://example.com/clip.mp4\"></video>",
+		"///",
 		"💡 The link must be a direct http/https URL.",
 		"",
 		"---",
-		"## Slideshow & collage",
-		"```",
+		"##_ Slideshow & collage",
+		"///",
 		"[slideshow]",
 		"![](https://example.com/1.jpg)",
 		"![](https://example.com/2.jpg)",
 		"[/slideshow]",
-		"```",
+		"///",
 		"Or with the raw tag:",
-		"```",
+		"///",
 		"<tg-slideshow>",
-		"![]([https://example.com/1.jpg](https://example.com/1.jpg))",
-		"![]([https://example.com/2.jpg](https://example.com/2.jpg))",
+		"![](https://example.com/1.jpg)",
+		"![](https://example.com/2.jpg)",
 		"</tg-slideshow>",
-		"```",
+		"///",
 		"💡 Shortcut: send just a few **media URLs** in a row (one per line) and they auto-group into a slideshow.",
 		"",
 		"---",
-		"## Map",
-		"```",
-		"[map: 35.6892, 51.3890]",
-		"```",
+		"##_ Map",
+		"`[map: 35.6892, 51.3890]`",
 	].join("\n"),
 };
+
 const DEMO = {
 	fa: [
-		"# 🎨 دمو کامل",
+		"#_ 🎨 دمو کامل",
 		"",
 		"این یک نمونه از همه‌ی امکانات با هم است:",
 		"",
-		"## ۱) استایل‌ها",
+		"##_ ۱) استایل‌ها",
 		"**بولد** · *ایتالیک* · ~~خط‌خورده~~ · `کد` · <u>آندرلاین</u> · <tg-spoiler>اسپویلر</tg-spoiler>",
 		"",
-		"## ۲) لیست و تسک",
+		"##_ ۲) لیست و تسک",
 		"- مورد اول",
 		"- مورد دوم",
 		"- [x] انجام شد",
 		"- [ ] در انتظار",
 		"",
-		"## ۳) نقل‌قول",
+		"##_ ۳) نقل‌قول",
 		"> دانش، قدرت است. **همیشه**.",
 		"",
-		"## ۴) نقل‌قول وسط‌چین",
+		"##_ ۴) نقل‌قول وسط‌چین",
 		"<aside>سادگی، اوجِ ظرافت است.<cite>داوینچی</cite></aside>",
 		"",
-		"## ۵) فرمول",
+		"##_ ۵) فرمول",
 		"داخل‌خطی $a^2 + b^2 = c^2$ و بلوکی:",
 		"$$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$",
 		"",
-		"## ۶) بلوک کد",
-		"```python",
+		"##_ ۶) بلوک کد",
+		"///",
 		"def hi():",
 		"    print(\"سلام دنیا\")",
-		"```",
+		"///",
 		"",
-		"## ۷) جدول",
+		"##_ ۷) جدول",
 		"| نام | امتیاز |",
 		"|-----|--------|",
 		"| علی | ۹۵ |",
 		"| رضا | ۸۸ |",
 		"",
-		"## ۸) بلوک کشویی",
+		"##_ ۸) بلوک کشویی",
 		"<details><summary>برای دیدن بزن</summary>محتوای مخفی اینجاست 🎉</details>",
 		"",
-		"## ۹) زمان زنده و نقشه",
+		"##_ ۹) زمان زنده و نقشه",
 		"[زمان: 2026-07-01 20:00]",
 		"[نقشه: 35.6892, 51.3890]",
 	].join("\n"),
 	en: [
-		"# 🎨 Full Demo",
+		"#_ 🎨 Full Demo",
 		"",
 		"A sample showing every feature together:",
 		"",
-		"## 1) Styles",
+		"##_ 1) Styles",
 		"**bold** · *italic* · ~~strike~~ · `code` · <u>underline</u> · <tg-spoiler>spoiler</tg-spoiler>",
 		"",
-		"## 2) Lists & tasks",
+		"##_ 2) Lists & tasks",
 		"- first item",
 		"- second item",
 		"- [x] done",
 		"- [ ] pending",
 		"",
-		"## 3) Quote",
+		"##_ 3) Quote",
 		"> Knowledge is power. **Always**.",
 		"",
-		"## 4) Pull-quote",
+		"##_ 4) Pull-quote",
 		"<aside>Simplicity is the ultimate sophistication.<cite>Da Vinci</cite></aside>",
 		"",
-		"## 5) Formulas",
+		"##_ 5) Formulas",
 		"Inline $a^2 + b^2 = c^2$ and block:",
 		"$$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$",
 		"",
-		"## 6) Code block",
-		"```python",
+		"##_ 6) Code block",
+		"///",
 		"def hi():",
 		"    print(\"hello world\")",
-		"```",
+		"///",
 		"",
-		"## 7) Table",
+		"##_ 7) Table",
 		"| Name | Score |",
 		"|------|-------|",
 		"| Ali  | 95 |",
 		"| Reza | 88 |",
 		"",
-		"## 8) Expandable",
+		"##_ 8) Expandable",
 		"<details><summary>Tap to reveal</summary>Hidden content here 🎉</details>",
 		"",
-		"## 9) Live time & map",
+		"##_ 9) Live time & map",
 		"[time: 2026-07-01 20:00]",
 		"[map: 35.6892, 51.3890]",
 	].join("\n"),
